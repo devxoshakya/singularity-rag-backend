@@ -186,3 +186,14 @@ async def analyze_result(
             ) for r in raw_results
         ]
     )
+
+# --- 4. HEALTH CHECK ENDPOINT ---
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker."""
+    try:
+        # Check MongoDB connection
+        await mongo_client.admin.command('ping')
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)}")

@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  ragbot:
+    build:
+      target: development
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    environment:
+      - RELOAD=true
+    command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    
+  mongodb:
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password

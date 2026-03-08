@@ -1,0 +1,28 @@
+services:
+  ragbot:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MONGO_URI=${MONGO_URI}
+    volumes:
+      - ./clg_pdfs:/app/clg_pdfs
+      - ./result_pdfs:/app/result_pdfs
+    restart: unless-stopped
+
+  # Optional: Local MongoDB for development (commented out since you're using Atlas)
+  # Uncomment the section below if you want to use local MongoDB instead
+  # mongodb:
+  #   image: mongo:7.0
+  #   container_name: ragbot-mongodb
+  #   ports:
+  #     - "27017:27017"
+  #   environment:
+  #     - MONGO_INITDB_DATABASE=rag_pdfs
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   restart: unless-stopped
+
+# volumes:
+#   mongodb_data:
