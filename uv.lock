@@ -2173,6 +2173,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "rapidocr-onnxruntime" },
+    { name = "requests" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -2197,6 +2198,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.7.5" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rapidocr-onnxruntime", specifier = ">=1.4.4" },
+    { name = "requests", specifier = ">=2.32.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.41.0" },
 ]
 
