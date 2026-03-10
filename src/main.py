@@ -1,34 +1,65 @@
 import os
-import requests
-from fastapi import FastAPI, Depends, HTTPException
+import jwt
+import httpx
+from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import List
 from google import genai
 from google.genai import types
 from motor.motor_asyncio import AsyncIOMotorClient
-from fastapi import Header
+from contextlib import asynccontextmanager
+from datetime import datetime
 
-# --- 1. CONFIGURATION & LIFESPAN ---
-app = FastAPI(title="College RAG API")
+# --- 1. CONFIG & SECURITY ---
 
-# Use environment variables
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
+# This secret must match the one used by the service generating the tokens
+JWT_SECRET = os.getenv("JWT_SECRET")
+ALGORITHM = "HS256"
 
-# Initialize clients
-genai_client = genai.Client(api_key=GEMINI_API_KEY)
-mongo_client = AsyncIOMotorClient(MONGO_URI)
+# This utility finds the 'Authorization: Bearer <token>' header
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+async def get_current_user_id(token: str = Depends(oauth2_scheme)):
+    """Decodes the JWT and returns the user_id (sub). No DB lookup needed."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="User ID missing in token")
+        return user_id
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+# --- 2. SETUP & MODELS ---
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Added user_id to the index for faster sidebar lookups
+    await sessions_collection.create_index([("user_id", 1), ("session_id", 1), ("timestamp", -1)])
+    await sessions_collection.create_index("timestamp", expireAfterSeconds=604800)
+    yield
+    mongo_client.close()
+
+app = FastAPI(title="Stateless Secure RAG", lifespan=lifespan)
+
+# Clients (Keep your existing env vars)
+genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+mongo_client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
 db = mongo_client["rag_pdfs"]
-collection = db["pdfs"]
-rules_collection = db["result"]
+collection, rules_collection, sessions_collection = db["pdfs"], db["result"], db["sessions"]
 
-# --- 2. DATA MODELS (PYDANTIC) ---
-class ResultAnalysisRequest(BaseModel):
-    question: str
-
+class SessionItem(BaseModel):
+    session_id: str
+    title: str
 
 class QueryRequest(BaseModel):
     question: str
+    session_id: str
+
+class ResultAnalysisRequest(BaseModel):
+    question: str
+    session_id: str
 
 class SearchResult(BaseModel):
     text: str
@@ -39,161 +70,122 @@ class QueryResponse(BaseModel):
     answer: str
     context_used: List[SearchResult]
 
-# --- 3. THE RAG LOGIC ---
-async def get_rag_context(query: str):
-    """Refactored version of your get_query_results for Production"""
-    # Generate embedding
-    response = genai_client.models.embed_content(
-        model="gemini-embedding-001",
-        contents=query,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
-    )
-    query_embedding = response.embeddings[0].values
+class ChatMessage(BaseModel):
+    role: str
+    content: str
 
-    # Vector Search Pipeline
+class HistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ChatMessage]
+
+# --- 3. HELPER FUNCTIONS ---
+
+async def get_sliding_window_history(session_id: str, user_id: str, limit: int = 4):
+    """Fetches last N messages for the specific user and session."""
+    cursor = sessions_collection.find({"session_id": session_id, "user_id": user_id}).sort("timestamp", -1).limit(limit)
+    history_docs = await cursor.to_list(length=limit)
+    history_docs.reverse()
+    
+    chat_history = []
+    for doc in history_docs:
+        chat_history.append(types.Content(role="user", parts=[types.Part(text=doc["user_query"])]))
+        chat_history.append(types.Content(role="model", parts=[types.Part(text=doc["bot_response"])]))
+    return chat_history
+
+def safe_generate(chat_session, prompt: str):
+    try:
+        response = chat_session.send_message(prompt)
+        return response.text.strip() if response.text else "Response filtered by safety settings."
+    except Exception:
+        return "The AI is currently unavailable. Please try again."
+
+# --- 4. ROUTES ---
+
+@app.get("/sessions", response_model=List[SessionItem])
+async def list_sessions(user_id: str = Depends(get_current_user_id)):
+    """Fetches sidebar titles for the LOGGED-IN user only."""
     pipeline = [
-        {
-            "$vectorSearch": {
-                "index": "vector_index", 
-                "queryVector": query_embedding,
-                "path": "embedding",
-                "numCandidates": 100,
-                "limit": 5
-            }
-        },
-        {
-            "$project": {
-                "_id": 0,
-                "text": 1,
-                "metadata": 1,
-                "score": {"$meta": "vectorSearchScore"}
-            }
-        }
+        {"$match": {"user_id": user_id}}, # Security: Only see your own chats
+        {"$sort": {"timestamp": 1}},
+        {"$group": {
+            "_id": "$session_id",
+            "first_query": {"$first": "$user_query"},
+            "last_active": {"$last": "$timestamp"}
+        }},
+        {"$sort": {"last_active": -1}}
     ]
-    
-    # Motor uses 'to_list' for async iteration
-    cursor = collection.aggregate(pipeline)
-    results = await cursor.to_list(length=5)
-    return results
+    cursor = sessions_collection.aggregate(pipeline)
+    results = await cursor.to_list(length=100)
+    return [SessionItem(session_id=s["_id"], title=s["first_query"][:35] + "...") for s in results]
 
-# --- 4. THE API ENDPOINT ---
+@app.get("/history/{session_id}", response_model=HistoryResponse)
+async def get_chat_history(session_id: str, user_id: str = Depends(get_current_user_id)):
+    """Loads chat bubbles for the specific session, verifying ownership."""
+    cursor = sessions_collection.find({"session_id": session_id, "user_id": user_id}).sort("timestamp", 1)
+    docs = await cursor.to_list(length=100) 
+    
+    messages = []
+    for d in docs:
+        messages.append(ChatMessage(role="user", content=d["user_query"]))
+        messages.append(ChatMessage(role="model", content=d["bot_response"]))
+    return HistoryResponse(session_id=session_id, messages=messages)
+
 @app.post("/ask", response_model=QueryResponse)
-async def ask_college_bot(request: QueryRequest):
-    # 1. Get relevant chunks from MongoDB
-    raw_results = await get_rag_context(request.question)
-    
-    if not raw_results:
-        raise HTTPException(status_code=404, detail="No relevant information found.")
+async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_current_user_id)):
+    # 1. History (Last 2 turns)
+    chat_history = await get_sliding_window_history(request.session_id, user_id, limit=4)
 
-    # 2. Build context for LLM
-    context_text = "\n\n".join([r['text'] for r in raw_results])
-    
-    # 3. Generate final answer
-    prompt = f"Answer the question based ONLY on this context:\n{context_text}\n\nQuestion: {request.question}"
-    
-    llm_response = genai_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
+    # 2. Vector Search
+    embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=request.question)
+    cursor = collection.aggregate([
+        {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 3}},
+        {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
+    ])
+    results = await cursor.to_list(length=3)
+    context_text = "\n".join([r['text'] for r in results])
 
-    # 4. Format response
-    formatted_context = [
-        SearchResult(
-            text=r['text'], 
-            score=r['score'], 
-            source=r['metadata'].get('source', 'Unknown')
-        ) for r in raw_results
-    ]
+    # 3. Generate
+    chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+    ans = safe_generate(chat, f"CONTEXT:\n{context_text}\n\nQUESTION: {request.question}")
 
-    return QueryResponse(
-        answer=llm_response.text,
-        context_used=formatted_context
-    )
-
-
+    # 4. Save (Linking to USER_ID)
+    await sessions_collection.insert_one({
+        "user_id": user_id, 
+        "session_id": request.session_id, 
+        "user_query": request.question, 
+        "bot_response": ans, 
+        "timestamp": datetime.utcnow()
+    })
+    return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="PDF") for r in results])
 
 @app.post("/analyze-result", response_model=QueryResponse)
-async def analyze_result(
-    request: ResultAnalysisRequest, 
-    x_roll_no: str = Header(None) # Looks for 'x-roll-no' in request headers
-):
-    # 1. Validation Guard
-    if not x_roll_no:
-        raise HTTPException(status_code=400, detail="Header 'x-roll-no' is required.")
-
-    # 2. Fetch Student Data (External API)
-    api_url = f"https://singularity-server.devxoshakya.workers.dev/api/result/by-rollno?rollNo={x_roll_no}"
-    try:
-        api_res = requests.get(api_url)
-        student_data = api_res.json().get("data") if api_res.status_code == 200 else None
-        if not student_data:
-            raise HTTPException(status_code=404, detail="Student record not found.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Result API Error: {str(e)}")
-
-    # 3. Vector Search (Using the Grading Rules Collection)
-    # We use gemini-embedding-001 for the search
-    embed_resp = genai_client.models.embed_content(
-        model="gemini-embedding-001",
-        contents=request.question,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
-    )
-    query_embedding = embed_resp.embeddings[0].values
-
-    pipeline = [
-        {
-            "$vectorSearch": {
-                "index": "vector_index", # The index on your grading_rules collection
-                "queryVector": query_embedding,
-                "path": "embedding",
-                "numCandidates": 100,
-                "limit": 5
-            }
-        },
-        {"$project": {"_id": 0, "text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
-    ]
+async def analyze_result(data: ResultAnalysisRequest, user_id: str = Depends(get_current_user_id), x_roll_no: str = Header(None)):
+    if not x_roll_no: raise HTTPException(status_code=400, detail="Roll No Header missing")
     
-    # We target rules_collection specifically
-    cursor = rules_collection.aggregate(pipeline)
-    raw_results = await cursor.to_list(length=5)
-    context_text = "\n\n".join([r['text'] for r in raw_results])
+    chat_history = await get_sliding_window_history(data.session_id, user_id, limit=4)
 
-    # 4. Strict LLM Generation
-    prompt = f"""
-    You are an Academic Auditor. Compare the Student Data to the University Rules.
-    
-    STUDENT DATA: {student_data}
-    UNIVERSITY RULES: {context_text}
-    QUERY: {request.question}
-    
-    Analyze the eligibility for Pass/Fail/PWG strictly based on these rules.
-    """
+    async with httpx.AsyncClient() as client:
+        res = await client.get(f"https://singularity-server.devxoshakya.workers.dev/api/result/by-rollno?rollNo={x_roll_no}")
+        student_data = res.json().get("data") if res.status_code == 200 else None
+            
+    if not student_data: raise HTTPException(status_code=404, detail="Student record not found.")
 
-    llm_response = genai_client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(temperature=0)
-    )
+    embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=data.question)
+    cursor = rules_collection.aggregate([
+        {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 2}},
+        {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
+    ])
+    results = await cursor.to_list(length=2)
+    rules_text = "\n".join([r['text'] for r in results])
 
-    # 5. Format Response
-    return QueryResponse(
-        answer=llm_response.text,
-        context_used=[
-            SearchResult(
-                text=r['text'], 
-                score=r['score'], 
-                source=r['metadata'].get('source', 'Criteria PDF')
-            ) for r in raw_results
-        ]
-    )
+    chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+    ans = safe_generate(chat, f"STUDENT_DATA: {student_data}\nRULES: {rules_text}\nQUERY: {data.question}")
 
-# --- 4. HEALTH CHECK ENDPOINT ---
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for Docker."""
-    try:
-        # Check MongoDB connection
-        await mongo_client.admin.command('ping')
-        return {"status": "healthy", "database": "connected"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database connection failed: {str(e)}")
+    await sessions_collection.insert_one({
+        "user_id": user_id, 
+        "session_id": data.session_id, 
+        "user_query": data.question, 
+        "bot_response": ans, 
+        "timestamp": datetime.utcnow()
+    })
+    return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="Rules") for r in results])
