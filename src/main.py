@@ -10,6 +10,8 @@ from google.genai import types
 from motor.motor_asyncio import AsyncIOMotorClient
 from contextlib import asynccontextmanager
 from datetime import datetime
+import json
+from fastapi.responses import StreamingResponse
 
 # --- 1. CONFIG & SECURITY ---
 
@@ -130,7 +132,35 @@ async def get_chat_history(session_id: str, user_id: str = Depends(get_current_u
         messages.append(ChatMessage(role="model", content=d["bot_response"]))
     return HistoryResponse(session_id=session_id, messages=messages)
 
-@app.post("/ask", response_model=QueryResponse)
+# @app.post("/ask", response_model=QueryResponse)
+# async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_current_user_id)):
+#     # 1. History (Last 2 turns)
+#     chat_history = await get_sliding_window_history(request.session_id, user_id, limit=4)
+
+#     # 2. Vector Search
+#     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=request.question)
+#     cursor = collection.aggregate([
+#         {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 3}},
+#         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
+#     ])
+#     results = await cursor.to_list(length=3)
+#     context_text = "\n".join([r['text'] for r in results])
+
+#     # 3. Generate
+#     chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+#     ans = safe_generate(chat, f"CONTEXT:\n{context_text}\n\nQUESTION: {request.question}")
+
+#     # 4. Save (Linking to USER_ID)
+#     await sessions_collection.insert_one({
+#         "user_id": user_id, 
+#         "session_id": request.session_id, 
+#         "user_query": request.question, 
+#         "bot_response": ans, 
+#         "timestamp": datetime.utcnow()
+#     })
+#     return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="PDF") for r in results])
+
+@app.post("/ask")
 async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_current_user_id)):
     # 1. History (Last 2 turns)
     chat_history = await get_sliding_window_history(request.session_id, user_id, limit=4)
@@ -144,48 +174,142 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
     results = await cursor.to_list(length=3)
     context_text = "\n".join([r['text'] for r in results])
 
-    # 3. Generate
-    chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
-    ans = safe_generate(chat, f"CONTEXT:\n{context_text}\n\nQUESTION: {request.question}")
+    # Pre-format the sources exactly like your original QueryResponse
+    context_used = [
+        {"text": r['text'], "score": r['score'], "source": "PDF"} 
+        for r in results
+    ]
 
-    # 4. Save (Linking to USER_ID)
-    await sessions_collection.insert_one({
-        "user_id": user_id, 
-        "session_id": request.session_id, 
-        "user_query": request.question, 
-        "bot_response": ans, 
-        "timestamp": datetime.utcnow()
-    })
-    return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="PDF") for r in results])
+    # 3. Stream Generator
+    async def stream_generator():
+        full_ans = ""
+        
+        # FIRST: Send the sources immediately so the UI can show them
+        # We send it as a single JSON line
+        yield json.dumps({"context_used": context_used}) + "\n"
+        
+        # SECOND: Start streaming the AI text
+        chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+        
+        # Use the stream method
+        response_stream = chat.send_message_stream(
+            f"CONTEXT:\n{context_text}\n\nQUESTION: {request.question}"
+        )
 
-@app.post("/analyze-result", response_model=QueryResponse)
-async def analyze_result(data: ResultAnalysisRequest, user_id: str = Depends(get_current_user_id), x_roll_no: str = Header(None)):
-    if not x_roll_no: raise HTTPException(status_code=400, detail="Roll No Header missing")
+        for chunk in response_stream:
+            if chunk.text:
+                full_ans += chunk.text
+                # Yield only the raw text chunk
+                yield chunk.text
+
+        # 4. Save to DB (Runs after the loop finishes)
+        await sessions_collection.insert_one({
+            "user_id": user_id, 
+            "session_id": request.session_id, 
+            "user_query": request.question, 
+            "bot_response": full_ans, 
+            "timestamp": datetime.utcnow()
+        })
+
+    return StreamingResponse(stream_generator(), media_type="text/plain")
+
+# @app.post("/analyze-result", response_model=QueryResponse)
+# async def analyze_result(data: ResultAnalysisRequest, user_id: str = Depends(get_current_user_id), x_roll_no: str = Header(None)):
+#     if not x_roll_no: raise HTTPException(status_code=400, detail="Roll No Header missing")
     
+#     chat_history = await get_sliding_window_history(data.session_id, user_id, limit=4)
+
+#     async with httpx.AsyncClient() as client:
+#         res = await client.get(f"https://singularity-server.devxoshakya.workers.dev/api/result/by-rollno?rollNo={x_roll_no}")
+#         student_data = res.json().get("data") if res.status_code == 200 else None
+            
+#     if not student_data: raise HTTPException(status_code=404, detail="Student record not found.")
+
+#     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=data.question)
+#     cursor = rules_collection.aggregate([
+#         {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 2}},
+#         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
+#     ])
+#     results = await cursor.to_list(length=2)
+#     rules_text = "\n".join([r['text'] for r in results])
+
+#     chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+#     ans = safe_generate(chat, f"STUDENT_DATA: {student_data}\nRULES: {rules_text}\nQUERY: {data.question}")
+
+#     await sessions_collection.insert_one({
+#         "user_id": user_id, 
+#         "session_id": data.session_id, 
+#         "user_query": data.question, 
+#         "bot_response": ans, 
+#         "timestamp": datetime.utcnow()
+#     })
+#     return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="Rules") for r in results])
+
+@app.post("/analyze-result")
+async def analyze_result(
+    data: ResultAnalysisRequest, 
+    user_id: str = Depends(get_current_user_id), 
+    x_roll_no: str = Header(None)
+):
+    if not x_roll_no: 
+        raise HTTPException(status_code=400, detail="Roll No Header missing")
+    
+    # 1. History & External API Call
     chat_history = await get_sliding_window_history(data.session_id, user_id, limit=4)
 
     async with httpx.AsyncClient() as client:
         res = await client.get(f"https://singularity-server.devxoshakya.workers.dev/api/result/by-rollno?rollNo={x_roll_no}")
         student_data = res.json().get("data") if res.status_code == 200 else None
             
-    if not student_data: raise HTTPException(status_code=404, detail="Student record not found.")
+    if not student_data: 
+        raise HTTPException(status_code=404, detail="Student record not found.")
 
+    # 2. Vector Search for Rules
     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=data.question)
     cursor = rules_collection.aggregate([
-        {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 2}},
+        {"$vectorSearch": {
+            "index": "vector_index", 
+            "queryVector": embed.embeddings[0].values, 
+            "path": "embedding", 
+            "numCandidates": 50, 
+            "limit": 2
+        }},
         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
     ])
     results = await cursor.to_list(length=2)
     rules_text = "\n".join([r['text'] for r in results])
 
-    chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
-    ans = safe_generate(chat, f"STUDENT_DATA: {student_data}\nRULES: {rules_text}\nQUERY: {data.question}")
+    # 3. Define the Streaming Generator
+    async def stream_generator():
+        full_ans = ""
+        
+        # A. Send context/rules first (Metadata)
+        context_used = [
+            {"text": r['text'], "score": r['score'], "source": "Rules"} 
+            for r in results
+        ]
+        yield json.dumps({"context_used": context_used}) + "\n"
 
-    await sessions_collection.insert_one({
-        "user_id": user_id, 
-        "session_id": data.session_id, 
-        "user_query": data.question, 
-        "bot_response": ans, 
-        "timestamp": datetime.utcnow()
-    })
-    return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="Rules") for r in results])
+        # B. Initialize Streaming Chat
+        chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+        
+        # Combine student info and rules into one prompt
+        prompt = f"STUDENT_DATA: {student_data}\nRULES: {rules_text}\nQUERY: {data.question}"
+        
+        response_stream = chat.send_message_stream(prompt)
+
+        for chunk in response_stream:
+            if chunk.text:
+                full_ans += chunk.text
+                yield chunk.text
+
+        # 4. Save to Database after stream finishes
+        await sessions_collection.insert_one({
+            "user_id": user_id, 
+            "session_id": data.session_id, 
+            "user_query": data.question, 
+            "bot_response": full_ans, 
+            "timestamp": datetime.utcnow()
+        })
+
+    return StreamingResponse(stream_generator(), media_type="text/plain")
