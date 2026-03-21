@@ -45,6 +45,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Stateless Secure RAG", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows GET, POST, OPTIONS, etc.
+    allow_headers=["*"],  # Allows Authorization, X-Roll-No, Content-Type, etc.
+)
+
 # Clients (Keep your existing env vars)
 genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 mongo_client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
@@ -132,33 +140,6 @@ async def get_chat_history(session_id: str, user_id: str = Depends(get_current_u
         messages.append(ChatMessage(role="model", content=d["bot_response"]))
     return HistoryResponse(session_id=session_id, messages=messages)
 
-# @app.post("/ask", response_model=QueryResponse)
-# async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_current_user_id)):
-#     # 1. History (Last 2 turns)
-#     chat_history = await get_sliding_window_history(request.session_id, user_id, limit=4)
-
-#     # 2. Vector Search
-#     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=request.question)
-#     cursor = collection.aggregate([
-#         {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 3}},
-#         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
-#     ])
-#     results = await cursor.to_list(length=3)
-#     context_text = "\n".join([r['text'] for r in results])
-
-#     # 3. Generate
-#     chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
-#     ans = safe_generate(chat, f"CONTEXT:\n{context_text}\n\nQUESTION: {request.question}")
-
-#     # 4. Save (Linking to USER_ID)
-#     await sessions_collection.insert_one({
-#         "user_id": user_id, 
-#         "session_id": request.session_id, 
-#         "user_query": request.question, 
-#         "bot_response": ans, 
-#         "timestamp": datetime.utcnow()
-#     })
-#     return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="PDF") for r in results])
 
 @app.post("/ask")
 async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_current_user_id)):
@@ -213,37 +194,6 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
 
     return StreamingResponse(stream_generator(), media_type="text/plain")
 
-# @app.post("/analyze-result", response_model=QueryResponse)
-# async def analyze_result(data: ResultAnalysisRequest, user_id: str = Depends(get_current_user_id), x_roll_no: str = Header(None)):
-#     if not x_roll_no: raise HTTPException(status_code=400, detail="Roll No Header missing")
-    
-#     chat_history = await get_sliding_window_history(data.session_id, user_id, limit=4)
-
-#     async with httpx.AsyncClient() as client:
-#         res = await client.get(f"https://singularity-server.devxoshakya.workers.dev/api/result/by-rollno?rollNo={x_roll_no}")
-#         student_data = res.json().get("data") if res.status_code == 200 else None
-            
-#     if not student_data: raise HTTPException(status_code=404, detail="Student record not found.")
-
-#     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=data.question)
-#     cursor = rules_collection.aggregate([
-#         {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 2}},
-#         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
-#     ])
-#     results = await cursor.to_list(length=2)
-#     rules_text = "\n".join([r['text'] for r in results])
-
-#     chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
-#     ans = safe_generate(chat, f"STUDENT_DATA: {student_data}\nRULES: {rules_text}\nQUERY: {data.question}")
-
-#     await sessions_collection.insert_one({
-#         "user_id": user_id, 
-#         "session_id": data.session_id, 
-#         "user_query": data.question, 
-#         "bot_response": ans, 
-#         "timestamp": datetime.utcnow()
-#     })
-#     return QueryResponse(answer=ans, context_used=[SearchResult(text=r['text'], score=r['score'], source="Rules") for r in results])
 
 @app.post("/analyze-result")
 async def analyze_result(
