@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import json
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # --- 1. CONFIG & SECURITY ---
 
@@ -169,8 +170,19 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
         # We send it as a single JSON line
         yield json.dumps({"context_used": context_used}) + "\n"
         
+        
         # SECOND: Start streaming the AI text
-        chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history)
+        chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history,config={
+            "system_instruction": """You are a strictly grounded College Information Assistant. 
+Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
+
+RULES:
+1. ONLY answer based on the facts provided in the CONTEXT section.
+2. If the user asks for information NOT present in the context (e.g., medical syllabi, external events, or non-college topics), you must politely state: "I'm sorry, but I can only provide information based on the official college documents currently in my database."
+3. DO NOT use your internal training data, common sense, or outside knowledge to fill in gaps.
+4. Do not speculate. If the context is even slightly insufficient to give a full answer, admit that the information is missing.
+5. Treat the CONTEXT as the absolute limit of truth"""
+        })
         
         # Use the stream method
         response_stream = chat.send_message_stream(
