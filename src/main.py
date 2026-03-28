@@ -177,11 +177,8 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
 Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
 
 RULES:
-1. ONLY answer based on the facts provided in the CONTEXT section.
-2. If the user asks for information NOT present in the context (e.g., medical syllabi, external events, or non-college topics), you must politely state: "I'm sorry, but I can only provide information based on the official college documents currently in my database."
-3. DO NOT use your internal training data, common sense, or outside knowledge to fill in gaps.
-4. Do not speculate. If the context is even slightly insufficient to give a full answer, admit that the information is missing.
-5. Treat the CONTEXT as the absolute limit of truth"""
+1. If the user asks for information NOT present in the context such as syllabus, you must politely state: "I'm sorry, but our organization does not provide this course."
+2. write only as much as needed.
         })
         
         # Use the stream method
