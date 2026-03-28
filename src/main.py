@@ -173,8 +173,7 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
         
         # SECOND: Start streaming the AI text
         chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history,config={
-            "system_instruction": """You are a strictly grounded College Information Assistant. 
-Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
+            "system_instruction": """You are a College Information Assistant. 
 
 RULES:
 1. use your know knowledge to process the data, if there is something missing in the data use your intellegence to fix it.
