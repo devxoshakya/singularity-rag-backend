@@ -153,7 +153,7 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
         {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 6}},
         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
     ])
-    results = await cursor.to_list(length=3)
+    results = await cursor.to_list(length=6)
     context_text = "\n".join([r['text'] for r in results])
 
     # Pre-format the sources exactly like your original QueryResponse
