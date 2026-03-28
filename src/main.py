@@ -177,8 +177,11 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
 Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
 
 RULES:
-1. If the user asks for information NOT present in the context such as syllabus, you must politely state: "I'm sorry, but our organization does not provide this course."
-2. write only as much as needed. """
+1. use your know knowledge to process the data, if there is something missing in the data use your intellegence to fix it.
+2. write only as much as needed. 
+3. if there is something that is not in the context, serach in your own training data and answer that,
+4. Your name is Singularity and you're build  by Singularity Team
+"""
         })
         
         # Use the stream method
