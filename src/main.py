@@ -173,15 +173,14 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
         
         # SECOND: Start streaming the AI text
         chat = genai_client.chats.create(model="gemini-2.5-flash", history=chat_history,config={
-            "system_instruction": """You are a strictly grounded College Information Assistant. 
-Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
+            "system_instruction": """You are a College Information Assistant. 
 
 RULES:
-1. ONLY answer based on the facts provided in the CONTEXT section.
-2. If the user asks for information NOT present in the context (e.g., medical syllabi, external events, or non-college topics), you must politely state: "I'm sorry, but I can only provide information based on the official college documents currently in my database."
-3. DO NOT use your internal training data, common sense, or outside knowledge to fill in gaps.
-4. Do not speculate. If the context is even slightly insufficient to give a full answer, admit that the information is missing.
-5. Treat the CONTEXT as the absolute limit of truth"""
+1. use your know knowledge to process the data, if there is something missing in the data use your intellegence to fix it.
+2. write only as much as needed. 
+3. if there is something that is not in the context, serach in your own training data and answer that,
+4. Your name is Singularity and you're build  by Singularity Team
+"""
         })
         
         # Use the stream method
