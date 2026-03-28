@@ -150,7 +150,7 @@ async def ask_college_bot(request: QueryRequest, user_id: str = Depends(get_curr
     # 2. Vector Search
     embed = genai_client.models.embed_content(model="gemini-embedding-001", contents=request.question)
     cursor = collection.aggregate([
-        {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 3}},
+        {"$vectorSearch": {"index": "vector_index", "queryVector": embed.embeddings[0].values, "path": "embedding", "numCandidates": 50, "limit": 6}},
         {"$project": {"text": 1, "metadata": 1, "score": {"$meta": "vectorSearchScore"}}}
     ])
     results = await cursor.to_list(length=3)
