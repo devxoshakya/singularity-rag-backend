@@ -178,7 +178,7 @@ Your knowledge is EXCLUSIVELY limited to the provided CONTEXT.
 
 RULES:
 1. If the user asks for information NOT present in the context such as syllabus, you must politely state: "I'm sorry, but our organization does not provide this course."
-2. write only as much as needed.
+2. write only as much as needed. """
         })
         
         # Use the stream method
