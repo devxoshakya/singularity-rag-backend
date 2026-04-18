@@ -1,190 +1,164 @@
-# RAGBot - College Document RAG API
+# Singularity RAG Backend — Feature README
 
-A FastAPI-based RAG (Retrieval-Augmented Generation) system for college document analysis using Google Gemini and MongoDB vector search.
+This backend helps students and applicants get reliable answers from college PDFs and result-rule documents, without manually searching long files.
 
-## Features
+## What problems this service solves
 
-- 🤖 **RAG System**: Intelligent document retrieval and response generation
-- 📚 **PDF Processing**: Handles college documents and ordinances
-- 🔍 **Vector Search**: MongoDB-powered semantic search
-- 🚀 **FastAPI**: Modern, fast web API framework
-- 🐳 **Docker Ready**: Containerized for easy deployment
+- **Information is scattered across long PDFs**  
+  The service turns PDF content into searchable knowledge and returns direct, contextual answers.
 
-## Quick Start with Docker
+- **Scanned/low-quality PDFs are hard to use**  
+  The ingestion flow falls back to OCR when normal text extraction is weak.
+
+- **Generic chatbot answers can miss official rules**  
+  Answers are grounded in retrieved chunks from uploaded academic documents.
+
+- **Rule-based result interpretation is hard for students**  
+  The result analysis flow combines student data + official ordinance context before generating analysis.
+
+- **Users need fast chat UX, not delayed full responses**  
+  Responses are streamed, with source context sent first so UI can render supporting references immediately.
+
+- **Deploying AI services is often complex**  
+  This project is Docker-ready and can be started with a small environment setup.
+
+---
+
+## Core product features
+
+### 1) College RAG chat (`/ask`)
+
+- Accepts a question plus `session_id`
+- Retrieves semantically relevant chunks from the **`pdfs` collection**
+- Uses conversation window memory from prior turns in that session
+- Streams answer text to the client
+- Sends `context_used` metadata first (score + source-ready snippets)
+- Stores question/answer pairs for session history
+
+### 2) Result analysis assistant (`/analyze-result`)
+
+- Accepts a question plus `session_id`
+- Requires `X-Roll-No` header
+- Fetches student result data from external API by roll number
+- Retrieves relevant rule chunks from the **`result` collection**
+- Combines student data + retrieved rules into one analysis prompt
+- Streams the final explanation and saves it to chat history
+
+### 3) Secure user-scoped sessions
+
+- JWT-based identity extraction (`sub` as user_id)
+- Session listing is filtered to logged-in user only
+- History retrieval is user-scoped per session
+- Session data has TTL cleanup behavior for old records
+
+### 4) Session and history APIs
+
+- `GET /sessions` → user’s recent chat sessions
+- `GET /history/{session_id}` → full message timeline for one session
+
+---
+
+## PDF ingestion depth (how knowledge is built)
+
+The ingestion notebooks (`notebooks/ingest.ipynb` and `notebooks/result_analysis.ipynb`) implement the end-to-end indexing flow.
+
+### Ingestion pipeline behavior
+
+1. **Load all PDFs from target folders**
+   - `clg_pdfs/` for general college query corpus
+   - `result_pdfs/` for rule/ordinance result analysis corpus
+
+2. **Extract page text with fallback OCR**
+   - Uses standard PDF text extraction first
+   - If page text is missing/too short, OCR is executed
+
+3. **Attach source metadata per page**
+   - Source file name
+   - Page number
+   - File path
+
+4. **Chunk documents for retrieval quality**
+   - Recursive splitting with overlap
+   - Keeps chunks small enough for accurate semantic matching
+
+5. **Generate embeddings in controlled batches**
+   - Uses Gemini embedding model
+   - Includes rate-limit-aware retry and wait handling
+
+6. **Insert vectorized records into MongoDB**
+   - Stores `text`, `embedding`, `metadata`
+
+7. **Create and poll vector index readiness**
+   - Creates `vector_index`
+   - Waits until queryable before usage
+
+### Why this ingestion approach matters
+
+- Handles both native-text and scanned PDFs
+- Improves recall with chunk overlap
+- Reduces ingestion failures from API rate limits
+- Preserves citation-ready metadata
+- Keeps retrieval usable immediately after index readiness
+
+---
+
+## What is used in the backend (concise)
+
+- **FastAPI** for HTTP APIs and streaming responses
+- **MongoDB** for vector search + session storage
+- **Google Gemini APIs** for embeddings and generation
+- **JWT auth** for user isolation
+- **HTTP integration** for roll-number-based student result fetch
+
+---
+
+## API summary
+
+- `GET /sessions`
+- `GET /history/{session_id}`
+- `POST /ask`
+- `POST /analyze-result`
+
+> Notes:
+> - Protected routes expect `Authorization: Bearer <token>`
+> - `/analyze-result` also expects `X-Roll-No` header
+
+---
+
+## Docker deployment
 
 ### Prerequisites
 
-- Docker and Docker Compose installed
-- Google Gemini API key
+- Docker + Docker Compose
+- Valid `GEMINI_API_KEY`
+- Valid `MONGO_URI`
+- `JWT_SECRET`
 
-### Setup
+### Run
 
-1. **Clone the repository**
-   ```bash
-   git clone <your-repo-url>
-   cd ragbot
-   ```
-
-2. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your GEMINI_API_KEY
-   ```
-
-3. **Run with Docker Compose**
-   ```bash
-   docker-compose up --build
-   ```
-
-The API will be available at `http://localhost:8000`
-
-### API Documentation
-
-Visit `http://localhost:8000/docs` for interactive API documentation.
-
-## API Endpoints
-
-### 1. Health Check
-```
-GET /health
-```
-Returns the health status of the application and database connection.
-
-### 2. Ask Questions
-```
-POST /ask
-```
-Query the document collection with natural language questions.
-
-**Request Body:**
-```json
-{
-  "question": "What are the eligibility criteria for B.Tech?"
-}
-```
-
-### 3. Analyze Results
-```
-POST /analyze-result
-```
-Analyze student data against university rules for Pass/Fail/PWG determination.
-
-**Request Body:**
-```json
-{
-  "question": "Analyze eligibility for student with CGPA 7.5"
-}
-```
-
-## Development
-
-### Local Development Setup
-
-1. **Install dependencies**
-   ```bash
-   pip install uv
-   uv sync
-   ```
-
-2. **Set up MongoDB**
-   ```bash
-   # Using Docker
-   docker run -d -p 27017:27017 --name ragbot-mongodb mongo:7.0
-   ```
-
-3. **Set environment variables**
-   ```bash
-   export GEMINI_API_KEY=your_key_here
-   export MONGO_URI=mongodb://localhost:27017/rag_pdfs
-   ```
-
-4. **Run the application**
-   ```bash
-   uv run uvicorn src.main:app --reload
-   ```
-
-### Docker Commands
-
-**Build the Docker image:**
 ```bash
-docker build -t ragbot .
+cp .env.example .env
+# add GEMINI_API_KEY, MONGO_URI, JWT_SECRET in .env
+
+docker compose up --build
 ```
 
-**Run with custom environment:**
-```bash
-docker run -p 8000:8000 \
-  -e GEMINI_API_KEY=your_key \
-  -e MONGO_URI=mongodb://host.docker.internal:27017/rag_pdfs \
-  ragbot
-```
+Service runs at: `http://localhost:8000`
+Docs: `http://localhost:8000/docs`
 
-**Run development environment:**
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
+---
 
-## Project Structure
+## Environment variables
 
-```
-ragbot/
-├── src/
-│   └── main.py              # FastAPI application
-├── clg_pdfs/               # College PDF documents
-├── result_pdfs/            # Result analysis PDFs
-├── notebooks/              # Jupyter notebooks for development
-├── Dockerfile              # Docker image configuration
-├── docker-compose.yml      # Multi-container setup
-├── pyproject.toml         # Python dependencies
-└── requirements.txt       # Alternative dependency file
-```
+- `GEMINI_API_KEY` — embedding + generation access
+- `MONGO_URI` — MongoDB connection
+- `JWT_SECRET` — JWT decode secret for user-scoped APIs
 
-## Environment Variables
+---
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `GEMINI_API_KEY` | Google Gemini API key | Yes |
-| `MONGO_URI` | MongoDB connection string | Yes |
+## Repo paths relevant to these features
 
-## Troubleshooting
-
-### Common Issues
-
-1. **MongoDB Connection Failed**
-   - Ensure MongoDB is running
-   - Check the `MONGO_URI` environment variable
-   - For Docker: use service name `mongodb` instead of `localhost`
-
-2. **Gemini API Errors**
-   - Verify your `GEMINI_API_KEY` is correct
-   - Check API quota and billing
-
-3. **Port Already in Use**
-   ```bash
-   # Change port in docker-compose.yml or stop conflicting service
-   docker-compose down
-   sudo lsof -i :8000
-   ```
-
-### Logs
-
-**View application logs:**
-```bash
-docker-compose logs -f ragbot
-```
-
-**View MongoDB logs:**
-```bash
-docker-compose logs -f mongodb
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with Docker
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Backend API: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/src/main.py`
+- General ingestion workflow: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/ingest.ipynb`
+- Result-analysis ingestion workflow: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/result_analysis.ipynb`
+- Docker setup: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/docker-compose.yml`
