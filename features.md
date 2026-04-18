@@ -49,12 +49,12 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ### 3.1 College RAG Chat (`POST /ask`)
 
-### Input
+#### Input
 - `question`: user query
 - `session_id`: chat session identity
 - JWT bearer token in `Authorization`
 
-### Backend flow
+#### Backend flow
 1. Fetch recent chat memory for this user and session (sliding window).
 2. Generate embedding for the new question.
 3. Run MongoDB Atlas vector search on collection `pdfs` using index `vector_index`.
@@ -63,11 +63,11 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 6. Stream answer text back to client.
 7. Save query + generated response to session store.
 
-### Output behavior
+#### Output behavior
 - First line includes JSON with `context_used` (retrieved snippets + scores).
 - Remaining stream is model-generated plain text chunks.
 
-### User impact
+#### User impact
 - Better answer relevance from document grounding.
 - More responsive UI because of streaming.
 
@@ -75,13 +75,13 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ### 3.2 Result Analysis Assistant (`POST /analyze-result`)
 
-### Input
+#### Input
 - `question`
 - `session_id`
 - `X-Roll-No` header
 - JWT bearer token
 
-### Backend flow
+#### Backend flow
 1. Validate roll number header.
 2. Pull recent chat memory for this user/session.
 3. Fetch student result payload from external API.
@@ -90,7 +90,7 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 6. Stream analysis output.
 7. Persist query and analysis in sessions collection.
 
-### User impact
+#### User impact
 - Converts raw marks/rule data into understandable decisions or guidance.
 - Avoids manual rule matching across long ordinance documents.
 
@@ -98,19 +98,19 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ### 3.3 Session Management and User Isolation
 
-### Session list (`GET /sessions`)
+#### Session list (`GET /sessions`)
 - Returns user’s sessions with title (first query preview).
 - Sorted by last active timestamp.
 
-### Session history (`GET /history/{session_id}`)
+#### Session history (`GET /history/{session_id}`)
 - Returns full ordered message timeline for that session.
 
-### Security boundaries
+#### Security boundaries
 - JWT is decoded with `JWT_SECRET`.
 - `sub` claim is treated as `user_id`.
 - All session queries are filtered by `user_id` and `session_id`.
 
-### Data lifecycle
+#### Data lifecycle
 - TTL index on `timestamp` supports automatic session record expiry (7 days configured).
 
 ---
@@ -125,14 +125,14 @@ Two corpora are prepared separately:
 - `clg_pdfs/` → inserted into `pdfs`
 - `result_pdfs/` → inserted into `result`
 
-### 4.1 Extraction
+#### 4.1 Extraction
 
 1. Enumerate all `*.pdf` files in the target directory.
 2. Open each PDF page-by-page via `pdfplumber`.
 3. Attempt standard text extraction.
 4. If text is absent/very short, render page image and run OCR (`RapidOCR`).
 
-### 4.2 Structuring and Metadata
+#### 4.2 Structuring and Metadata
 
 Each page-level document stores:
 - `page_content` (text)
@@ -143,7 +143,7 @@ Each page-level document stores:
 
 This metadata enables source-aware debugging and potential UI citations.
 
-### 4.3 Chunking Strategy
+#### 4.3 Chunking Strategy
 
 - Uses `RecursiveCharacterTextSplitter`
 - Typical settings in notebooks:
@@ -155,7 +155,7 @@ Why this matters:
 - Preserves semantic completeness in each chunk.
 - Overlap reduces boundary information loss.
 
-### 4.4 Embedding Generation
+#### 4.4 Embedding Generation
 
 - Model: `gemini-embedding-001`
 - Batched embedding requests (e.g., batch size 30)
@@ -167,7 +167,7 @@ Why this matters:
 - Stable ingestion on free-tier or rate-limited quotas.
 - Reduces ingestion failure rate during large imports.
 
-### 4.5 Storage in MongoDB
+#### 4.5 Storage in MongoDB
 
 Each inserted record contains:
 - `text`
@@ -179,7 +179,7 @@ Collections:
 - `pdfs` (college info corpus)
 - `result` (rules/ordinance corpus)
 
-### 4.6 Vector Indexing
+#### 4.6 Vector Indexing
 
 - Search index name: `vector_index`
 - Type: `vectorSearch`
