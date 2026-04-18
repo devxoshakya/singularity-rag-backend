@@ -118,8 +118,8 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 ## 4) PDF Ingestion Pipeline Deep Dive
 
 Ingestion is demonstrated in:
-- `notebooks/ingest.ipynb`
-- `notebooks/result_analysis.ipynb`
+- `./notebooks/ingest.ipynb`
+- `./notebooks/result_analysis.ipynb`
 
 Two corpora are prepared separately:
 - `clg_pdfs/` → inserted into `pdfs`
@@ -276,7 +276,7 @@ Service:
 
 ## 9) Relevant Source Paths
 
-- Backend app: `src/main.py`
-- Ingestion notebook (college corpus): `notebooks/ingest.ipynb`
-- Ingestion notebook (result corpus): `notebooks/result_analysis.ipynb`
-- Compose config: `docker-compose.yml`
+- Backend app: `./src/main.py`
+- Ingestion notebook (college corpus): `./notebooks/ingest.ipynb`
+- Ingestion notebook (result corpus): `./notebooks/result_analysis.ipynb`
+- Compose config: `./docker-compose.yml`
