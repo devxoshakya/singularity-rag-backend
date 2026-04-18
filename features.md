@@ -47,7 +47,7 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ## 3) Feature Deep Dive
 
-## 3.1 College RAG Chat (`POST /ask`)
+### 3.1 College RAG Chat (`POST /ask`)
 
 ### Input
 - `question`: user query
@@ -73,7 +73,7 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ---
 
-## 3.2 Result Analysis Assistant (`POST /analyze-result`)
+### 3.2 Result Analysis Assistant (`POST /analyze-result`)
 
 ### Input
 - `question`
@@ -96,7 +96,7 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 
 ---
 
-## 3.3 Session Management and User Isolation
+### 3.3 Session Management and User Isolation
 
 ### Session list (`GET /sessions`)
 - Returns user’s sessions with title (first query preview).
@@ -118,21 +118,21 @@ The system is designed to reduce manual PDF lookup, improve answer relevance, an
 ## 4) PDF Ingestion Pipeline Deep Dive
 
 Ingestion is demonstrated in:
-- `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/ingest.ipynb`
-- `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/result_analysis.ipynb`
+- `notebooks/ingest.ipynb`
+- `notebooks/result_analysis.ipynb`
 
 Two corpora are prepared separately:
 - `clg_pdfs/` → inserted into `pdfs`
 - `result_pdfs/` → inserted into `result`
 
-## 4.1 Extraction
+### 4.1 Extraction
 
 1. Enumerate all `*.pdf` files in the target directory.
 2. Open each PDF page-by-page via `pdfplumber`.
 3. Attempt standard text extraction.
 4. If text is absent/very short, render page image and run OCR (`RapidOCR`).
 
-## 4.2 Structuring and Metadata
+### 4.2 Structuring and Metadata
 
 Each page-level document stores:
 - `page_content` (text)
@@ -143,7 +143,7 @@ Each page-level document stores:
 
 This metadata enables source-aware debugging and potential UI citations.
 
-## 4.3 Chunking Strategy
+### 4.3 Chunking Strategy
 
 - Uses `RecursiveCharacterTextSplitter`
 - Typical settings in notebooks:
@@ -155,7 +155,7 @@ Why this matters:
 - Preserves semantic completeness in each chunk.
 - Overlap reduces boundary information loss.
 
-## 4.4 Embedding Generation
+### 4.4 Embedding Generation
 
 - Model: `gemini-embedding-001`
 - Batched embedding requests (e.g., batch size 30)
@@ -167,7 +167,7 @@ Why this matters:
 - Stable ingestion on free-tier or rate-limited quotas.
 - Reduces ingestion failure rate during large imports.
 
-## 4.5 Storage in MongoDB
+### 4.5 Storage in MongoDB
 
 Each inserted record contains:
 - `text`
@@ -179,7 +179,7 @@ Collections:
 - `pdfs` (college info corpus)
 - `result` (rules/ordinance corpus)
 
-## 4.6 Vector Indexing
+### 4.6 Vector Indexing
 
 - Search index name: `vector_index`
 - Type: `vectorSearch`
@@ -193,37 +193,37 @@ Index readiness is polled before query usage.
 
 ## 5) Technology Used and Why
 
-## 5.1 FastAPI
+### 5.1 FastAPI
 - Provides async HTTP endpoints, request validation, and OpenAPI docs.
 - Enables clean route design for chat, history, and health flows.
 
-## 5.2 Google Gemini APIs (`google-genai`)
+### 5.2 Google Gemini APIs (`google-genai`)
 - Embeddings: semantic vector representation for retrieval.
 - Generation: response synthesis using retrieved context and session history.
 - Streaming API support for incremental response delivery.
 
-## 5.3 MongoDB + Vector Search
+### 5.3 MongoDB + Vector Search
 - Stores embeddings and supports `$vectorSearch` retrieval.
 - Also stores session logs and supports indexing for fast user/session queries.
 - TTL index supports lifecycle management for old chat records.
 
-## 5.4 OCR + PDF stack
+### 5.4 OCR + PDF stack
 - `pdfplumber` for direct PDF text extraction.
 - `RapidOCR` fallback for scanned/non-selectable text pages.
 - Makes ingestion robust across mixed PDF quality.
 
-## 5.5 LangChain text splitter components
+### 5.5 LangChain text splitter components
 - Used in notebooks for consistent chunking behavior.
 - Produces retrieval-optimized chunks with overlap.
 
-## 5.6 JWT Authentication (`pyjwt`)
+### 5.6 JWT Authentication (`pyjwt`)
 - Validates bearer token and extracts user identity.
 - Enforces per-user data isolation in session APIs.
 
-## 5.7 HTTP client (`httpx`)
+### 5.7 HTTP client (`httpx`)
 - Used by result analysis endpoint to fetch roll-number-based student data.
 
-## 5.8 Docker / Docker Compose
+### 5.8 Docker / Docker Compose
 - Containerized runtime for backend deployment.
 - Simplifies local and production-like environment consistency.
 
@@ -273,7 +273,7 @@ Service:
 
 ## 9) Relevant Source Paths
 
-- Backend app: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/src/main.py`
-- Ingestion notebook (college corpus): `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/ingest.ipynb`
-- Ingestion notebook (result corpus): `/home/runner/work/singularity-rag-backend/singularity-rag-backend/notebooks/result_analysis.ipynb`
-- Compose config: `/home/runner/work/singularity-rag-backend/singularity-rag-backend/docker-compose.yml`
+- Backend app: `src/main.py`
+- Ingestion notebook (college corpus): `notebooks/ingest.ipynb`
+- Ingestion notebook (result corpus): `notebooks/result_analysis.ipynb`
+- Compose config: `docker-compose.yml`
