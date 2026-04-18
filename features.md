@@ -247,7 +247,7 @@ Index readiness is polled before query usage.
 - `JWT_SECRET`
 
 ### Operational defaults
-- Session message retention is configured with a MongoDB TTL index at **7 days** (`604800` seconds) on `timestamp`.
+- Session message retention is configured with a MongoDB TTL index at **7 days** (**604,800 seconds**, configured as `604800`) on `timestamp`.
 
 ### Standard startup
 ```bash
